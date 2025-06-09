@@ -11,6 +11,23 @@ But it's designed to **scale to other countries and datasets**.
 
 ---
 
+## 🖼️ Example: CLI and Invalid Votes Map
+
+Below is an example of how the interactive CLI prompt works using `click` and `inquirer`, followed by the resulting map for **invalid vote share by gmina**.
+
+### 🖱️ CLI Prompt Flow
+This is what the user sees when running the app:
+
+![CLI Prompt Example](assets/cli_prompt_demo.png)
+
+### 📊 Map Output: Invalid Votes
+The result of selecting "invalid vote share" for gminy:
+
+![Invalid Votes Map](assets/invalid_votes_screen.png)
+
+---
+
+
 ## ✨ Features
 
 - Visualize boundaries without data ("outline view")
@@ -130,7 +147,7 @@ if teryt_candidates:
     print(f"✅ Found TERYT-like column(s): {teryt_candidates}")
 else:
     print("❌ No TERYT column found. Available columns:", gdf.columns)
-    
+
 # Plot
 gdf.plot(edgecolor='black', figsize=(10, 10))
 plt.title(f"Polish {level.capitalize()} - Boundary Preview")
