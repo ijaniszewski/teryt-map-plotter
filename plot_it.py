@@ -1,98 +1,85 @@
-"""
-CLI tool to plot geospatial maps using TerytMapPlotter and predefined LEVEL_CONFIGS.
-This script allows users to interactively select the type of data (view) and
-administrative level to visualize using TERYT-coded Polish boundaries.
-
-Run this script with:
-    python plot_it.py
-
-Requirements:
-    - click
-    - inquirer
-    - geopandas
-    - matplotlib
-    - pandas
-"""
-
+from teryt_map_plotter import TerytMapPlotter, AdminLevel  # adjust import if needed
 import os
+import utilities as utils  # assumes you have load_cleaned_gminy_df() there
 
-import click
-import inquirer
+# -----------------------------------------------------------------------
+# Step 1: Define path to PKW gmina-level election results
+# -----------------------------------------------------------------------
 
-from level_configs import LEVEL_CONFIGS
-from teryt_map_plotter import AdminLevel, TerytMapPlotter
+base_data_dir = "data/poland/2025/presidential_elections/first_round"
+csv_gminy_path = os.path.join(
+    base_data_dir, "wyniki_gl_na_kandydatow_po_gminach_utf8.csv"
+)
 
+# -----------------------------------------------------------------------
+# Step 2: Load and normalize the raw PKW data
+# -----------------------------------------------------------------------
+# This helper function:
+# - Converts comma-separated numbers to floats
+# - Strips spaces
+# - Ensures all TERYT codes are zero-padded strings
+# - Merges all 18 Warsaw dzielnice into a single row (TERYT Gminy = 146501)
+#   since Warsaw is a single gmina in the shapefile
+df = utils.load_cleaned_gminy_df(csv_gminy_path)
 
-@click.command()
-def main():
-    """
-    CLI entry point for generating TERYT-based administrative maps.
+# -----------------------------------------------------------------------
+# Step 3: Calculate turnout metric (can be replaced with anything else)
+# -----------------------------------------------------------------------
+# We now calculate the percentage of voters who actually cast a ballot
+eligible = "Liczba wyborców uprawnionych do głosowania"
+voted = (
+    "Liczba wyborców, którym wydano karty do głosowania w lokalu wyborczym "
+    "oraz w głosowaniu korespondencyjnym (łącznie)"
+)
 
-    Guides the user through:
-        - Choosing the type of map (view)
-        - Selecting the level of administrative boundary
-        - Applying preprocessing and merging data
-        - Rendering the final plot
-    """
-    click.echo("#" * 60)
-    click.echo("\U0001F5FA\uFE0F  TERYT Map Plotter")
-    click.echo("-" * 60)
+df["turnout"] = df[voted] / df[eligible]
 
-    # List all available views and levels
-    levels = [e.value for e in AdminLevel]
-    views = sorted(set(v for (_, v) in LEVEL_CONFIGS.keys()))
+# -----------------------------------------------------------------------
+# Step 4: Convert DataFrame into a TERYT → value dictionary
+# -----------------------------------------------------------------------
+# TerytMapPlotter expects a dictionary like:
+# {
+#     "146501": 0.612,  # TERYT code (6-digit or 4-digit) : value to plot
+#     ...
+# }
+turnout_dict = df.set_index("TERYT Gminy")["turnout"].to_dict()
 
-    # Prompt user to select view
-    view_choice = [
-        inquirer.List(
-            "view",
-            message="Choose what to show",
-            choices=views,
-            default="turnout",
-        )
-    ]
-    view = inquirer.prompt(view_choice)["view"]
+# -----------------------------------------------------------------------
+# Step 5: Initialize the plotter and generate a map
+# -----------------------------------------------------------------------
+# Here we plot at the GMINA level directly using the 6-digit TERYT codes.
+# The plotter will internally match these to the shapefile (which uses 7-digit codes)
+# by comparing only the first 6 digits.
 
-    # Prompt user to select level
-    level_choice = [
-        inquirer.List(
-            "level",
-            message="Choose administrative boundaries level (granularity)",
-            choices=levels,
-            default=os.getenv("AIRFLOW_VAR_LEVEL", "powiaty"),
-        )
-    ]
-    level = inquirer.prompt(level_choice)["level"]
-    level_enum = AdminLevel(level)
+lvl = AdminLevel.WOJEWODZTWA
 
-    # Retrieve configuration
-    config = LEVEL_CONFIGS.get((level_enum, view))
-    if config is None:
-        click.echo(f"\u274C No config for level={level} and view={view}")
-        return
+plotter = TerytMapPlotter(level=lvl, teryt_dict=turnout_dict, value_col="turnout")
 
-    # Initialize plotter
-    plotter = TerytMapPlotter(level=level_enum)
+plotter.plot_boundaries(f"Voter Turnout by {lvl.value.capitalize()}")
 
-    # Apply optional preprocessor
-    if config.preprocessor:
-        plotter.apply_preprocessor(config.preprocessor)
+# -----------------------------------------------------------------------
+# OPTIONAL: Plot aggregated data at POWIAT level using a custom handler
+# -----------------------------------------------------------------------
+# If you want to visualize the same data at a higher level (e.g. powiats),
+# just change the `level` to AdminLevel.POWIATY and either:
+# - let the plotter aggregate the gminas for you (default = mean)
+# - OR define your own aggregation logic using a `handler` function
 
-    # Load and merge data if available
-    if config.csv_path:
-        plotter.load_data(
-            data=config.csv_path,
-            teryt_col=config.teryt_col,
-            handler=config.handler,
-        )
-        plotter.merge(value_col=config.value_col)
+# Example of custom aggregation: take MIN turnout per powiat
+# from collections import defaultdict
+# import numpy as np
 
-    # Use custom or fallback title
-    title = config.title or f"{view.title()} by {level.title()}"
+# def min_by_powiat(teryt_dict):
+#     groups = defaultdict(list)
+#     for teryt, val in teryt_dict.items():
+#         groups[str(teryt)[:4]].append(val)  # first 4 digits = powiat
+#     return {k: float(np.min(v)) for k, v in groups.items()}
 
-    # Render the plot
-    plotter.plot(value_col=config.value_col, title=title)
+# plotter = TerytMapPlotter(
+#     level=AdminLevel.POWIATY,
+#     teryt_dict=turnout_dict,
+#     value_col="turnout",
+#     handler=min_by_powiat
+# )
 
-
-if __name__ == "__main__":
-    main()
+# plotter.plot_boundaries("Minimum Voter Turnout by Powiat")

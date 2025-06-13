@@ -1,182 +1,122 @@
-"""
-TerytMapPlotter: A flexible class for plotting geospatial data for administrative regions in Poland
-using the TERYT coding system. It supports merging external datasets (e.g., election results) with
-GeoDataFrames for visualization.
-
-Classes:
-    AdminLevel (Enum): Administrative levels in Poland.
-    LevelConfig (dataclass): Configuration for plotting a specific administrative level.
-    TerytMapPlotter (dataclass): Main class for loading, merging, and plotting TERYT-based maps.
-
-Dependencies:
-    - pandas
-    - geopandas
-    - matplotlib
-    - enum
-    - os
-"""
-
 import os
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Optional, Union
-
+from typing import Dict, Optional, Callable
 import geopandas as gpd
 import matplotlib.pyplot as plt
-import pandas as pd
+from collections import defaultdict
+
 
 BASE_MAP_DIR = "gis_boundaries"
 
 
 class AdminLevel(str, Enum):
-    """Enumeration of administrative levels in Poland."""
     GMINY = "gminy"
     POWIATY = "powiaty"
     WOJEWODZTWA = "wojewodztwa"
     POLSKA = "polska"
 
 
-@dataclass
-class LevelConfig:
-    """Configuration for a specific map level.
-
-    Attributes:
-        csv_path (Optional[str]): Path to CSV with additional data.
-        teryt_col (Optional[str]): Column in CSV with TERYT codes.
-        handler (Optional[Callable]): Function to normalize/prepare data.
-        value_col (Optional[str]): Column to visualize on the map.
-        title (Optional[str]): Title for the map.
-        preprocessor (Optional[Callable]): Function to preprocess GeoDataFrame.
-    """
-    csv_path: Optional[str]
-    teryt_col: Optional[str]
-    handler: Optional[Callable[[pd.DataFrame], pd.DataFrame]]
-    value_col: Optional[str]
-    title: Optional[str]
-    preprocessor: Optional[Callable[[gpd.GeoDataFrame], gpd.GeoDataFrame]] = None
-
-
-@dataclass
 class TerytMapPlotter:
-    """Class for loading, merging, and visualizing TERYT-based maps in Poland."""
+    """
+    Plots statistical maps using gmina-level shapefile,
+    aggregating geometries as needed for higher levels.
 
-    level: AdminLevel
-    shapefile_path: str = None
-    teryt_shp_col: str = "JPT_KOD_JE"
-    gdf: gpd.GeoDataFrame = field(init=False)
+    Args:
+        level (AdminLevel): Target level (gminy, powiaty, etc.)
+        teryt_dict (Optional[Dict[str, float]]): Dictionary {TERYT: value}.
+        value_col (str): Column name to store in GeoDataFrame.
+        handler (Optional[Callable]): Optional aggregation function.
+    """
 
-    def __post_init__(self):
-        if self.level not in AdminLevel:
-            raise ValueError(f"❌ Invalid level: {self.level}")
-
-        # Generate default path if not provided
-        if self.shapefile_path is None:
-            self.shapefile_path = os.path.join(
-                BASE_MAP_DIR, self.level.value, f"{self.level.value}.shp"
-            )
-
-        self.gdf = gpd.read_file(self.shapefile_path).to_crs(epsg=4326)
-
-    def apply_preprocessor(
-        self, preprocessor: Callable[[gpd.GeoDataFrame], gpd.GeoDataFrame]
-    ):
-        """Apply a custom preprocessing function to the GeoDataFrame."""
-        self.gdf = preprocessor(self.gdf)
-
-    def load_data(
+    def __init__(
         self,
-        data: Union[str, pd.DataFrame],
-        teryt_col: str,
-        handler: Callable[[pd.DataFrame], pd.DataFrame],
+        level: AdminLevel,
+        teryt_dict: Optional[Dict[str, float]] = None,
+        value_col: str = "value",
+        handler: Optional[Callable[[Dict[str, float]], Dict[str, float]]] = None,
     ):
-        """
-        Load and preprocess external data (e.g., voting data).
+        self.level = level
+        self.teryt_dict = teryt_dict
+        self.value_col = value_col
+        self.handler = handler
+        self.teryt_shp_col = "JPT_KOD_JE"
 
-        Args:
-            data (str or pd.DataFrame): Path to CSV or a DataFrame.
-            teryt_col (str): Column name with TERYT codes.
-            handler (Callable): Function that cleans and returns a processed DataFrame.
-        """
-        df = (
-            pd.read_csv(data, sep=";", dtype=str, encoding="utf-8")
-            if isinstance(data, str)
-            else data.copy()
-        )
-        df.columns = df.columns.str.strip()
-        try:
-            for col in df.columns:
-                df[col] = df[col].str.replace(",", ".").str.strip()
-                try:
-                    df[col] = pd.to_numeric(df[col])
-                except (ValueError, TypeError):
-                    continue
-        except Exception as e:
-            print(f"⚠️ Failed to load voting data: {e}")
+        self.shapefile_path = os.path.join(BASE_MAP_DIR, "gminy", "gminy.shp")
+        self._load_shapefile()
 
-        df = handler(df)
-        self.df = df
-        self.teryt_data_col = teryt_col
+        if self.level != AdminLevel.GMINY:
+            self._aggregate_geometry()
 
-    def merge(self, value_col: str):
-        """
-        Merge the processed data with the shapefile based on TERYT code.
+        if self.teryt_dict:
+            self._apply_values()
 
-        Args:
-            value_col (str): Column name with values to visualize.
+    def _load_shapefile(self):
+        self.gdf = gpd.read_file(self.shapefile_path).to_crs(epsg=4326)
+        # Normalize TERYT6 key for later grouping
+        self.gdf["TERYT6"] = self.gdf[self.teryt_shp_col].astype(str).str[:6]
 
-        Raises:
-            ValueError: If the column is missing or unmatched regions exist.
-        """
-        self.merged = self.gdf.merge(
-            self.df,
-            left_on=self.teryt_shp_col,
-            right_on=self.teryt_data_col,
-            how="left",
-        )
+    def _aggregate_geometry(self):
+        key_len = self._get_key_length()
+        self.gdf["agg_key"] = self.gdf["TERYT6"].str[:key_len]
+        self.gdf = self.gdf.dissolve(by="agg_key", as_index=False)
 
-        if value_col not in self.merged.columns:
-            raise ValueError(f"🛑 Column '{value_col}' not found after merge.")
+    def _apply_values(self):
+        if self.handler:
+            final_dict = self.handler(self.teryt_dict)
+        else:
+            target_len = self._get_key_length()
+            final_dict = self._default_aggregate(self.teryt_dict, target_len)
 
-        missing = self.merged[self.merged[value_col].isna()]
-        if not missing.empty:
-            print("❌ Missing values:")
-            print(missing[[self.teryt_shp_col]].head())
-            raise ValueError(f"🛑 {len(missing)} unmatched regions in shapefile.")
+        # Use the appropriate key column depending on level
+        if self.level == AdminLevel.GMINY:
+            self.gdf[self.value_col] = self.gdf["TERYT6"].map(final_dict)
+        else:
+            self.gdf[self.value_col] = self.gdf["agg_key"].map(final_dict)
 
-    def plot(self, value_col: str = None, title: str = "Map", cmap: str = "OrRd"):
-        """
-        Plot the map, optionally with data coloring.
+    @staticmethod
+    def _infer_teryt_length(teryt_dict: Dict[str, float]) -> int:
+        return len(next(iter(teryt_dict)))
 
-        Args:
-            value_col (str, optional): Name of the column to visualize.
-            title (str): Title for the plot.
-            cmap (str): Matplotlib colormap name.
+    def _get_key_length(self) -> int:
+        return {
+            AdminLevel.GMINY: 6,
+            AdminLevel.POWIATY: 4,
+            AdminLevel.WOJEWODZTWA: 2,
+            AdminLevel.POLSKA: 0,  # aggregate all into one
+        }.get(self.level, 6)
 
-        Raises:
-            ValueError: If specified column does not exist.
-        """
-        if not hasattr(self, "merged"):
-            self.merged = self.gdf.copy()
+    @staticmethod
+    def _default_aggregate(
+        teryt_dict: Dict[str, float], target_len: int
+    ) -> Dict[str, float]:
+        groups = defaultdict(list)
+        for teryt, val in teryt_dict.items():
+            key = str(teryt)[:target_len]
+            groups[key].append(val)
+        return {k: sum(v) / len(v) for k, v in groups.items()}
 
-        if value_col:
-            if value_col not in self.merged.columns:
-                raise ValueError(f"🛑 Missing column '{value_col}' for plotting.")
-
+    def plot_boundaries(
+        self,
+        title: str = "Administrative Boundaries",
+        value_col: Optional[str] = None,
+    ):
         fig, ax = plt.subplots(figsize=(12, 12))
+        column = value_col or self.value_col
 
-        if value_col:
-            self.merged.plot(
-                column=value_col,
-                cmap=cmap,
+        if column and column in self.gdf.columns:
+            self.gdf.plot(
+                column=column,
+                cmap="OrRd",
                 linewidth=0.1,
                 edgecolor="black",
                 legend=True,
                 ax=ax,
             )
+            ax.set_title(title, fontsize=16)
         else:
-            self.merged.plot(edgecolor="black", linewidth=0.3, ax=ax)
+            self.gdf.plot(edgecolor="black", linewidth=0.3, ax=ax)
+            ax.set_title(f"{title} (no data)", fontsize=16)
 
-        ax.set_title(title, fontsize=16)
         ax.axis("off")
         plt.tight_layout()
         plt.subplots_adjust(top=0.92)
