@@ -1,6 +1,9 @@
-from teryt_map_plotter import TerytMapPlotter, AdminLevel  # adjust import if needed
 import os
-import utilities as utils  # assumes you have load_cleaned_gminy_df() there
+
+import matplotlib.pyplot as plt  # needed to create optional fig/ax
+
+import utilities as utils
+from teryt_map_plotter import AdminLevel, TerytMapPlotter
 
 # -----------------------------------------------------------------------
 # Step 1: Define path to PKW gmina-level election results
@@ -55,7 +58,28 @@ lvl = AdminLevel.WOJEWODZTWA
 
 plotter = TerytMapPlotter(level=lvl, teryt_dict=turnout_dict, value_col="turnout")
 
-plotter.plot_boundaries(f"Voter Turnout by {lvl.value.capitalize()}")
+# OPTIONAL: Provide fig/ax for customization
+customize = True  # <- Set to True if you want to control figure size, font, layout, or save to file
+
+if customize:
+    # Manually create matplotlib figure and axes with a custom size
+    fig, ax = plt.subplots(figsize=(14, 10))
+
+    # Pass fig and ax to the plotter to take full control of the appearance
+    plotter.plot_boundaries(
+        f"Voter Turnout by {lvl.value.capitalize()}", fig=fig, ax=ax
+    )
+
+    # Customize the title appearance (e.g., larger font size)
+    ax.set_title("Custom Title Fontsize", fontsize=20)
+
+    # Adjust layout and save the figure to file
+    plt.tight_layout()
+    plt.savefig("custom_turnout_map.png", dpi=300)
+
+else:
+    # Default behavior: plot with internal fig/ax and automatic layout/show
+    plotter.plot_boundaries(f"Voter Turnout by {lvl.value.capitalize()}")
 
 # -----------------------------------------------------------------------
 # OPTIONAL: Plot aggregated data at POWIAT level using a custom handler

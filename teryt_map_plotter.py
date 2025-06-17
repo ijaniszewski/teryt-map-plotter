@@ -1,10 +1,10 @@
 import os
+from collections import defaultdict
 from enum import Enum
-from typing import Dict, Optional, Callable
+from typing import Callable, Dict, Optional
+
 import geopandas as gpd
 import matplotlib.pyplot as plt
-from collections import defaultdict
-
 
 BASE_MAP_DIR = "gis_boundaries"
 
@@ -52,7 +52,6 @@ class TerytMapPlotter:
 
     def _load_shapefile(self):
         self.gdf = gpd.read_file(self.shapefile_path).to_crs(epsg=4326)
-        # Normalize TERYT6 key for later grouping
         self.gdf["TERYT6"] = self.gdf[self.teryt_shp_col].astype(str).str[:6]
 
     def _aggregate_geometry(self):
@@ -67,7 +66,6 @@ class TerytMapPlotter:
             target_len = self._get_key_length()
             final_dict = self._default_aggregate(self.teryt_dict, target_len)
 
-        # Use the appropriate key column depending on level
         if self.level == AdminLevel.GMINY:
             self.gdf[self.value_col] = self.gdf["TERYT6"].map(final_dict)
         else:
@@ -82,7 +80,7 @@ class TerytMapPlotter:
             AdminLevel.GMINY: 6,
             AdminLevel.POWIATY: 4,
             AdminLevel.WOJEWODZTWA: 2,
-            AdminLevel.POLSKA: 0,  # aggregate all into one
+            AdminLevel.POLSKA: 0,
         }.get(self.level, 6)
 
     @staticmethod
@@ -99,8 +97,14 @@ class TerytMapPlotter:
         self,
         title: str = "Administrative Boundaries",
         value_col: Optional[str] = None,
+        fig: Optional[plt.Figure] = None,
+        ax: Optional[plt.Axes] = None,
     ):
-        fig, ax = plt.subplots(figsize=(12, 12))
+        user_supplied_axes = fig is not None and ax is not None
+
+        if not user_supplied_axes:
+            fig, ax = plt.subplots(figsize=(12, 12))
+
         column = value_col or self.value_col
 
         if column and column in self.gdf.columns:
@@ -118,6 +122,10 @@ class TerytMapPlotter:
             ax.set_title(f"{title} (no data)", fontsize=16)
 
         ax.axis("off")
-        plt.tight_layout()
-        plt.subplots_adjust(top=0.92)
-        plt.show()
+
+        if user_supplied_axes:
+            return fig, ax
+        else:
+            plt.tight_layout()
+            plt.subplots_adjust(top=0.92)
+            plt.show()
