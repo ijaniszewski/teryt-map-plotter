@@ -283,6 +283,79 @@ dd {
   box-shadow: 0 12px 30px rgba(31, 40, 36, 0.12);
 }
 
+.made-by-badge,
+.loading-overlay {
+  position: absolute;
+  z-index: 500;
+}
+
+.made-by-badge {
+  top: 18px;
+  right: 18px;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(36, 48, 43, 0.18);
+  border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(31, 40, 36, 0.12);
+  text-align: right;
+}
+
+.made-by-badge strong {
+  font-size: 12px;
+  color: #1d2522;
+}
+
+.made-by-badge a {
+  color: #176b5b;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.made-by-badge a:hover {
+  text-decoration: underline;
+}
+
+.loading-overlay {
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(230, 235, 226, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+.loading-card {
+  display: grid;
+  gap: 8px;
+  width: min(380px, calc(100vw - 48px));
+  padding: 18px 20px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(36, 48, 43, 0.18);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(31, 40, 36, 0.12);
+}
+
+.loading-card strong {
+  color: #1d2522;
+  font-size: 16px;
+}
+
+.loading-card p {
+  margin: 0;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(23, 107, 91, 0.16);
+  border-top-color: #176b5b;
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+}
+
 .legend {
   right: 18px;
   bottom: 18px;
@@ -352,6 +425,12 @@ dd {
 
   .map-wrap {
     min-height: 62vh;
+  }
+
+  .made-by-badge {
+    top: 14px;
+    right: 14px;
+    max-width: calc(100vw - 28px);
   }
 }
 
@@ -429,6 +508,15 @@ dd {
   .drop-zone {
     min-height: 82px;
     padding: 10px;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 

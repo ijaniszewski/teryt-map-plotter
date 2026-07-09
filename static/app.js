@@ -7,7 +7,11 @@ const state = {
   source: "built-in",
   range: null,
   legend: null,
+  loadingCount: 0,
+  boundaryCache: new Map(),
 };
+
+const apiBase = document.body.dataset.apiBase || "/api";
 
 const sequentialColors = ["#f2e8c9", "#d7d98d", "#86b66b", "#2f8664", "#143f3a"];
 const candidateColors = ["#2f80ed", "#eb5757"];
@@ -43,12 +47,31 @@ const els = {
   dropZone: document.querySelector("#drop-zone"),
   legend: document.querySelector("#legend"),
   toast: document.querySelector("#toast"),
+  loadingOverlay: document.querySelector("#loading-overlay"),
   statCount: document.querySelector("#stat-count"),
   statRange: document.querySelector("#stat-range"),
   statMean: document.querySelector("#stat-mean"),
   downloadPng: document.querySelector("#download-png"),
   copyLink: document.querySelector("#copy-link"),
 };
+
+function startLoading(message = "Loading map data") {
+  state.loadingCount += 1;
+  const title = els.loadingOverlay?.querySelector("strong");
+  if (title) {
+    title.textContent = message;
+  }
+  if (els.loadingOverlay) {
+    els.loadingOverlay.hidden = false;
+  }
+}
+
+function stopLoading() {
+  state.loadingCount = Math.max(0, state.loadingCount - 1);
+  if (state.loadingCount === 0 && els.loadingOverlay) {
+    els.loadingOverlay.hidden = true;
+  }
+}
 
 function initMap() {
   state.map = L.map("map", {
@@ -61,30 +84,35 @@ function initMap() {
 }
 
 async function loadDatasets(preferredId = null) {
-  const data = await getJson("/api/datasets");
-  state.datasets = data.datasets;
-  restoreStateFromUrl();
-  preferredId = preferredId || activeParams().get("dataset");
-  if (preferredId?.startsWith("uploaded:") && !state.datasets.some((item) => item.id === preferredId)) {
-    try {
-      const profile = await getJson(`/api/datasets/${encodeURIComponent(preferredId)}`);
-      state.datasets.push({
-        id: profile.id,
-        name: profile.name || "Uploaded CSV",
-        source: "uploaded",
-        facets: profile.facets,
-      });
-    } catch (_error) {
-      showToast("Uploaded dataset link is unavailable on this server");
+  startLoading("Loading datasets");
+  try {
+    const data = await getJson(`${apiBase}/datasets`);
+    state.datasets = data.datasets;
+    restoreStateFromUrl();
+    preferredId = preferredId || activeParams().get("dataset");
+    if (preferredId?.startsWith("uploaded:") && !state.datasets.some((item) => item.id === preferredId)) {
+      try {
+        const profile = await getJson(`${apiBase}/datasets/${encodeURIComponent(preferredId)}`);
+        state.datasets.push({
+          id: profile.id,
+          name: profile.name || "Uploaded CSV",
+          source: "uploaded",
+          facets: profile.facets,
+        });
+      } catch (_error) {
+        showToast("Uploaded dataset link is unavailable on this server");
+      }
     }
+    if (preferredId) {
+      state.source = preferredId.startsWith("uploaded:") ? "upload" : "built-in";
+    }
+    renderSourceControls();
+    populateBuiltInFacets(preferredId);
+    populateUploadedDatasets(preferredId);
+    await loadProfile();
+  } finally {
+    stopLoading();
   }
-  if (preferredId) {
-    state.source = preferredId.startsWith("uploaded:") ? "upload" : "built-in";
-  }
-  renderSourceControls();
-  populateBuiltInFacets(preferredId);
-  populateUploadedDatasets(preferredId);
-  await loadProfile();
 }
 
 function renderSourceControls() {
@@ -169,7 +197,7 @@ async function loadProfile() {
     await drawMap();
     return;
   }
-  state.profile = await getJson(`/api/datasets/${encodeURIComponent(dataset.id)}`);
+  state.profile = await getJson(`${apiBase}/datasets/${encodeURIComponent(dataset.id)}`);
   populateStrategies();
   populateCandidates();
   populateValueMetrics();
@@ -257,45 +285,61 @@ function updateModeControls() {
 }
 
 async function drawMap() {
-  const dataset = selectedDataset();
-  const params = new URLSearchParams({ level: els.level.value });
-  if (dataset && els.strategy.value) {
-    params.set("dataset", dataset.id);
-    if (els.strategy.value === "winner_colors") {
-      params.set("mode", "head_to_head");
-      params.set("candidate_a", els.candidateA.value);
-      params.set("candidate_b", els.candidateB.value);
-    } else if (els.strategy.value === "value_scale") {
-      const [mode, candidate] = els.valueMetric.value.split(/:(.*)/s);
-      params.set("mode", mode);
-      if (candidate) {
-        params.set("candidate", candidate);
+  startLoading("Rendering map");
+  try {
+    const dataset = selectedDataset();
+    const params = new URLSearchParams({ level: els.level.value });
+    const boundaryOnly = !dataset || !els.strategy.value;
+    if (dataset && els.strategy.value) {
+      params.set("dataset", dataset.id);
+      if (els.strategy.value === "winner_colors") {
+        params.set("mode", "head_to_head");
+        params.set("candidate_a", els.candidateA.value);
+        params.set("candidate_b", els.candidateB.value);
+      } else if (els.strategy.value === "value_scale") {
+        const [mode, candidate] = els.valueMetric.value.split(/:(.*)/s);
+        params.set("mode", mode);
+        if (candidate) {
+          params.set("candidate", candidate);
+        }
+      } else if (els.strategy.value === "uploaded_colors") {
+        params.set("mode", "custom_color");
       }
-    } else if (els.strategy.value === "uploaded_colors") {
-      params.set("mode", "custom_color");
     }
+
+    let payload;
+    if (boundaryOnly && state.boundaryCache.has(els.level.value)) {
+      payload = state.boundaryCache.get(els.level.value);
+    } else {
+      payload = await getJson(`${apiBase}/map?${params.toString()}`);
+      if (boundaryOnly) {
+        state.boundaryCache.set(els.level.value, payload);
+      }
+    }
+    updateUrlState();
+    const geojson = JSON.parse(payload.geojson);
+    state.legend = payload.legend;
+    updateStats(payload.stats);
+
+    const values = geojson.features
+      .map((feature) => feature.properties.value)
+      .filter((value) => typeof value === "number");
+    state.range = values.length ? [Math.min(...values), Math.max(...values)] : null;
+
+    if (state.layer) {
+      state.layer.remove();
+    }
+    state.layer = L.geoJSON(geojson, {
+      style: styleFeature,
+      onEachFeature: bindFeature,
+    }).addTo(state.map);
+    state.map.fitBounds(state.layer.getBounds(), { padding: [14, 14] });
+    renderLegend();
+  } catch (error) {
+    showToast(error.message || "Could not render this map");
+  } finally {
+    stopLoading();
   }
-
-  const payload = await getJson(`/api/map?${params.toString()}`);
-  updateUrlState();
-  const geojson = JSON.parse(payload.geojson);
-  state.legend = payload.legend;
-  updateStats(payload.stats);
-
-  const values = geojson.features
-    .map((feature) => feature.properties.value)
-    .filter((value) => typeof value === "number");
-  state.range = values.length ? [Math.min(...values), Math.max(...values)] : null;
-
-  if (state.layer) {
-    state.layer.remove();
-  }
-  state.layer = L.geoJSON(geojson, {
-    style: styleFeature,
-    onEachFeature: bindFeature,
-  }).addTo(state.map);
-  state.map.fitBounds(state.layer.getBounds(), { padding: [14, 14] });
-  renderLegend();
 }
 
 function styleFeature(feature) {
@@ -393,6 +437,146 @@ function updateStats(stats) {
   els.statMean.textContent = stats.mean === null ? "-" : formatNumber(stats.mean);
 }
 
+function selectedText(select) {
+  return select?.selectedOptions?.[0]?.textContent?.trim() || "";
+}
+
+function exportContext() {
+  const dataset = selectedDataset();
+  const boundary = selectedText(els.level);
+  const datasetName = dataset?.name || [
+    selectedText(els.country),
+    selectedText(els.year),
+    selectedText(els.election),
+    selectedText(els.round),
+  ].filter(Boolean).join(" · ");
+
+  let modeLabel = selectedText(els.strategy);
+  if (els.strategy.value === "value_scale") {
+    modeLabel = selectedText(els.valueMetric) || modeLabel;
+  }
+  if (els.strategy.value === "winner_colors") {
+    modeLabel = `${candidateLabel(els.candidateA.value)} vs ${candidateLabel(els.candidateB.value)}`;
+  }
+
+  return {
+    title: datasetName || "TERYT Map Plotter export",
+    subtitle: [boundary, modeLabel].filter(Boolean).join(" · "),
+  };
+}
+
+function legendBoxSize(ctx) {
+  if (!state.range && state.legend?.type !== "custom") {
+    return { width: 220, height: 62 };
+  }
+
+  if (state.legend?.type === "diverging") {
+    ctx.font = "600 13px Inter, Arial, sans-serif";
+    const leftWidth = ctx.measureText(candidateLabel(state.legend.left)).width;
+    const rightWidth = ctx.measureText(candidateLabel(state.legend.right)).width;
+    const minHalfWidth = Math.max(122, leftWidth + 20, rightWidth + 20);
+    return {
+      width: Math.min(400, Math.max(300, minHalfWidth * 2)),
+      height: 100,
+    };
+  }
+
+  if (state.legend?.type === "custom") {
+    return { width: 320, height: 84 };
+  }
+
+  return { width: 276, height: 92 };
+}
+
+function drawLegendBox(ctx, x, y, width) {
+  const boxHeight = legendBoxSize(ctx).height;
+  ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+  roundRect(ctx, x, y, width, boxHeight, 12, true, false);
+  ctx.strokeStyle = "rgba(36, 48, 43, 0.14)";
+  roundRect(ctx, x, y, width, boxHeight, 12, false, true);
+
+  ctx.fillStyle = "#1d2522";
+  ctx.font = "700 18px Inter, Arial, sans-serif";
+
+  if (!state.range && state.legend?.type !== "custom") {
+    ctx.fillText("Boundaries only", x + 18, y + 30);
+    return;
+  }
+
+  if (state.legend?.type === "diverging") {
+    ctx.fillText("Winner colors", x + 18, y + 30);
+    const swatchY = y + 44;
+    const swatchX = x + 18;
+    const swatchWidth = width - 36;
+    const halfWidth = swatchWidth / 2;
+    ctx.fillStyle = candidateColors[1];
+    ctx.fillRect(swatchX, swatchY, halfWidth, 14);
+    ctx.fillStyle = candidateColors[0];
+    ctx.fillRect(swatchX + halfWidth, swatchY, halfWidth, 14);
+    ctx.fillStyle = "#53605a";
+    ctx.font = "600 13px Inter, Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(candidateLabel(state.legend.left), swatchX + (halfWidth / 2), swatchY + 34);
+    ctx.fillText(candidateLabel(state.legend.right), swatchX + halfWidth + (halfWidth / 2), swatchY + 34);
+    ctx.textAlign = "start";
+    return;
+  }
+
+  if (state.legend?.type === "custom") {
+    ctx.fillText("Uploaded colors", x + 18, y + 30);
+    ctx.fillStyle = "#53605a";
+    ctx.font = "500 13px Inter, Arial, sans-serif";
+    ctx.fillText("Colors come directly from the uploaded dataset.", x + 18, y + 56);
+    return;
+  }
+
+  const [min, max] = state.range;
+  ctx.fillText("Value scale", x + 18, y + 30);
+  const scaleY = y + 44;
+  const scaleX = x + 18;
+  const scaleWidth = width - 36;
+  const segmentWidth = scaleWidth / sequentialColors.length;
+  sequentialColors.forEach((color, index) => {
+    ctx.fillStyle = color;
+    ctx.fillRect(scaleX + (segmentWidth * index), scaleY, segmentWidth, 14);
+  });
+  ctx.fillStyle = "#53605a";
+  ctx.font = "500 13px Inter, Arial, sans-serif";
+  ctx.fillText(formatNumber(min), scaleX, scaleY + 34);
+  const maxLabel = formatNumber(max);
+  const maxWidth = ctx.measureText(maxLabel).width;
+  ctx.fillText(maxLabel, scaleX + scaleWidth - maxWidth, scaleY + 34);
+}
+
+function drawMadeByBox(ctx, x, y) {
+  ctx.fillStyle = "#1d2522";
+  ctx.font = "700 16px Inter, Arial, sans-serif";
+  ctx.fillText("Made by Ignacy Janiszewski", x, y);
+  ctx.fillStyle = "#176b5b";
+  ctx.font = "700 14px Inter, Arial, sans-serif";
+  ctx.fillText("ijaniszewski.com", x, y + 22);
+}
+
+function roundRect(ctx, x, y, width, height, radius, fill, stroke) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  if (fill) {
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.stroke();
+  }
+}
+
 async function uploadCsv() {
   const file = els.upload.files[0];
   if (file) {
@@ -401,26 +585,31 @@ async function uploadCsv() {
 }
 
 async function uploadFile(file) {
+  startLoading("Uploading CSV");
   const body = new FormData();
   body.append("file", file);
-  const response = await fetch("/api/uploads", { method: "POST", body });
-  const data = await response.json();
-  if (!response.ok) {
-    showToast(data.error || "Could not upload this CSV");
-    return;
+  try {
+    const response = await fetch(`${apiBase}/uploads`, { method: "POST", body });
+    const data = await response.json();
+    if (!response.ok) {
+      showToast(data.error || "Could not upload this CSV");
+      return;
+    }
+    state.source = "upload";
+    state.datasets = state.datasets.filter((item) => item.id !== data.id);
+    state.datasets.push({
+      id: data.id,
+      name: data.name || "Uploaded CSV",
+      source: "uploaded",
+      facets: data.facets,
+    });
+    state.pendingUploadId = data.id;
+    renderSourceControls();
+    populateUploadedDatasets(data.id);
+    await loadProfile();
+  } finally {
+    stopLoading();
   }
-  state.source = "upload";
-  state.datasets = state.datasets.filter((item) => item.id !== data.id);
-  state.datasets.push({
-    id: data.id,
-    name: data.name || "Uploaded CSV",
-    source: "uploaded",
-    facets: data.facets,
-  });
-  state.pendingUploadId = data.id;
-  renderSourceControls();
-  populateUploadedDatasets(data.id);
-  await loadProfile();
 }
 
 async function downloadPng() {
@@ -430,6 +619,7 @@ async function downloadPng() {
     return;
   }
   const bounds = svg.getBoundingClientRect();
+  const contentBox = svg.getBBox();
   const clone = svg.cloneNode(true);
   clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   clone.setAttribute("width", Math.ceil(bounds.width));
@@ -445,11 +635,55 @@ async function downloadPng() {
   const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(clone))}`;
   const image = new Image();
   image.onload = () => {
+    const exportWidth = 1600;
+    const headerHeight = 130;
+    const canvasHeight = 1200;
+    const sidePadding = 64;
+    const bottomPadding = 36;
+    const mapAreaX = sidePadding;
+    const mapAreaY = headerHeight;
+    const mapAreaWidth = exportWidth - (sidePadding * 2);
+    const mapAreaHeight = canvasHeight - headerHeight - bottomPadding - 32;
+    const sourceWidth = Math.max(1, contentBox.width);
+    const sourceHeight = Math.max(1, contentBox.height);
+    const scale = Math.min(mapAreaWidth / sourceWidth, mapAreaHeight / sourceHeight);
+    const targetWidth = sourceWidth * scale;
+    const targetHeight = sourceHeight * scale;
+    const targetX = mapAreaX + ((mapAreaWidth - targetWidth) / 2);
+    const targetY = mapAreaY + ((mapAreaHeight - targetHeight) / 2);
+    const context = exportContext();
+
     const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(bounds.width);
-    canvas.height = Math.ceil(bounds.height);
+    canvas.width = exportWidth;
+    canvas.height = canvasHeight;
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(image, 0, 0);
+    ctx.fillStyle = "#e6ebe2";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#1d2522";
+    ctx.font = "700 36px Inter, Arial, sans-serif";
+    ctx.fillText(context.title, sidePadding, 54);
+    ctx.fillStyle = "#53605a";
+    ctx.font = "500 18px Inter, Arial, sans-serif";
+    ctx.fillText(context.subtitle || "Generated with TERYT Map Plotter", sidePadding, 88);
+
+    ctx.drawImage(
+      image,
+      contentBox.x,
+      contentBox.y,
+      sourceWidth,
+      sourceHeight,
+      targetX,
+      targetY,
+      targetWidth,
+      targetHeight,
+    );
+
+    const legendSize = legendBoxSize(ctx);
+    const legendX = exportWidth - sidePadding - legendSize.width;
+    const legendY = canvas.height - bottomPadding - legendSize.height;
+    drawLegendBox(ctx, legendX, legendY, legendSize.width);
+    drawMadeByBox(ctx, sidePadding, legendY + legendSize.height - 18);
     const link = document.createElement("a");
     link.download = "teryt-map.png";
     link.href = canvas.toDataURL("image/png");
@@ -511,16 +745,16 @@ function updateUrlState() {
   if (dataset) {
     params.set("dataset", dataset.id);
   }
-  if (els.strategy.value) {
+  if (dataset && els.strategy.value) {
     params.set("mode", els.strategy.value);
   }
-  if (els.valueMetric.value) {
+  if (dataset && els.strategy.value === "value_scale" && els.valueMetric.value) {
     params.set("metric", els.valueMetric.value);
   }
-  if (els.candidateA.value) {
+  if (dataset && els.strategy.value === "winner_colors" && els.candidateA.value) {
     params.set("a", els.candidateA.value);
   }
-  if (els.candidateB.value) {
+  if (dataset && els.strategy.value === "winner_colors" && els.candidateB.value) {
     params.set("b", els.candidateB.value);
   }
   history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);

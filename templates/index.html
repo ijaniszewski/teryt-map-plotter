@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   </head>
-  <body>
+  <body data-api-base="{{ request.script_root }}/api">
     <main class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -26,6 +26,15 @@
           </div>
         </section>
 
+        <section class="control-group">
+          <label for="level">Boundary</label>
+          <select id="level">
+            {% for key, item in levels.items() %}
+              <option value="{{ key }}">{{ item.label }}</option>
+            {% endfor %}
+          </select>
+        </section>
+
         <section class="upload-panel" id="upload-controls" hidden>
           <label for="upload">Upload CSV</label>
           <p>
@@ -33,10 +42,10 @@
             TERYT is the matching key; name is shown in tooltips.
           </p>
           <div class="sample-links">
-            <a href="/api/sample-csv?level=gminy">Municipality sample</a>
-            <a href="/api/sample-csv?level=powiaty">County sample</a>
-            <a href="/api/sample-csv?level=wojewodztwa">Voivodeship sample</a>
-            <a href="/api/sample-csv?level=polska">Poland sample</a>
+            <a href="{{ url_for('api_sample_csv', level='gminy') }}">Municipality sample</a>
+            <a href="{{ url_for('api_sample_csv', level='powiaty') }}">County sample</a>
+            <a href="{{ url_for('api_sample_csv', level='wojewodztwa') }}">Voivodeship sample</a>
+            <a href="{{ url_for('api_sample_csv', level='polska') }}">Poland sample</a>
           </div>
           <label class="drop-zone" for="upload" id="drop-zone">
             <input id="upload" type="file" accept=".csv,text/csv">
@@ -50,15 +59,6 @@
         </section>
 
         <section id="built-in-controls" class="control-stack built-in-grid">
-          <div class="control-group">
-            <label for="level">Boundary</label>
-            <select id="level">
-              {% for key, item in levels.items() %}
-                <option value="{{ key }}">{{ item.label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-
           <div class="control-group">
             <label for="country">Country</label>
             <select id="country"></select>
@@ -126,6 +126,17 @@
 
       <section class="map-wrap">
         <div id="map"></div>
+        <div class="made-by-badge">
+          <strong>Made by Ignacy Janiszewski</strong>
+          <a href="https://ijaniszewski.com" target="_blank" rel="noopener">ijaniszewski.com</a>
+        </div>
+        <div id="loading-overlay" class="loading-overlay" aria-live="polite" hidden>
+          <div class="loading-card">
+            <div class="loading-spinner" aria-hidden="true"></div>
+            <strong>Loading map data</strong>
+            <p>This can take a moment, especially for larger boundary layers.</p>
+          </div>
+        </div>
         <div id="legend" class="legend"></div>
         <div id="toast" class="toast" hidden></div>
       </section>
