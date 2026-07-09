@@ -1,138 +1,78 @@
-# 🗘️ TerytMapPlotter: Statistical Maps by Administrative Boundaries (Poland-first, world-ready)
+# TERYT Map Plotter
 
-A lightweight Python tool for mapping **statistical data** across **administrative units**, based on **TERYT codes**. Originally built for Polish elections, it supports:
+A small Flask app for coloring Polish administrative boundaries from TERYT-coded data.
 
-* 🟢 Gminy (municipalities)
-* 🟠 Powiaty (counties/districts)
-* 🔵 Województwa (provinces)
-* ⚪ Country-level (e.g. Poland as a whole)
+It currently supports:
 
-This tool takes **any metric** mapped to a **TERYT code** and visualizes it — automatically matching to boundaries and aggregating as needed.
+- municipalities, counties, voivodeships, and all of Poland,
+- built-in Polish presidential election CSV files from `data/`,
+- two-color head-to-head maps between two candidates,
+- value-scale candidate support percentage maps,
+- turnout maps,
+- uploaded CSV files with `teryt;name;value`,
+- PNG export from the current map view,
+- shareable links for the current map selection.
 
----
-
-## ✅ What You Need
-
-To generate a map, you only need:
-
-```python
-{"TERYT_ID": value}
-```
-
-Where:
-
-* `TERYT_ID` is a code for a gmina (6-digit), powiat (4-digit), or województwo (2-digit)
-* `value` is whatever you want to show: turnout, support %, population, etc.
-
----
-
-## 🧠 Why It Just Works
-
-* 🌟 Automatically matches your codes to the correct boundaries
-* 🏙️ **Fixes Warsaw**: Aggregates 18 PKW "dzielnice" into a single gmina, matching the shapefile
-* 🧲 Aggregates gmina-level data to powiat or województwo if needed (via mean by default)
-* 🧩 Supports custom aggregation handlers (e.g. median, weighted average)
-
----
-
-## 🖼️ Example: Voter Turnout by Gmina
-
-```python
-from teryt_map_plotter import TerytMapPlotter, AdminLevel
-import utilities as utils
-import os
-
-# Load and clean raw CSV
-base_data_dir = "data/poland/2025/presidential_elections/first_round"
-csv_path = os.path.join(base_data_dir, "wyniki_gl_na_kandydatow_po_gminach_utf8.csv")
-
-df = utils.load_cleaned_gminy_df(csv_path)
-
-# Calculate turnout
-df["turnout"] = df["Liczba wyborców, którym wydano karty do głosowania w lokalu wyborczym oraz w głosowaniu korespondencyjnym (łącznie)"] / df["Liczba wyborców uprawnionych do głosowania"]
-
-# Convert to dict {TERYT: value}
-turnout_dict = df.set_index("TERYT Gminy")["turnout"].to_dict()
-
-# Plot at gmina level
-plotter = TerytMapPlotter(
-    level=AdminLevel.GMINY,
-    teryt_dict=turnout_dict,
-    value_col="turnout"
-)
-
-plotter.plot_boundaries("Voter Turnout by Gmina")
-```
-
----
-
-## 🔄 Aggregate Automatically
-
-If you pass gmina-level data but want to see the result at powiat or województwo level, just change the level:
-
-```python
-plotter = TerytMapPlotter(
-    level=AdminLevel.POWIATY,
-    teryt_dict=turnout_dict,
-    value_col="turnout"
-)
-
-plotter.plot_boundaries("Avg Turnout by Powiat")
-```
-
-By default, it will average all gminas within each powiat.
-
-You can pass a custom `handler=` function to use median, min, max, or any other aggregation.
-
----
-
-## 🔍 Visualizing Without Data
-
-Want just the outlines? No problem:
-
-```python
-plotter = TerytMapPlotter(level=AdminLevel.GMINY)
-plotter.plot_boundaries("Administrative Boundaries Only")
-```
-
----
-
-## 🚀 Getting Started
-
-1. **Install dependencies**:
+## Run
 
 ```bash
-pip install -r requirements.txt
+python -m venv venv
+./venv/bin/python -m pip install -r requirements.txt
+./venv/bin/flask --app app run --debug
 ```
 
-2. **Download shapefiles** from:
-   [https://gis-support.pl/baza-wiedzy-2/dane-do-pobrania/granice-administracyjne/](https://gis-support.pl/baza-wiedzy-2/dane-do-pobrania/granice-administracyjne/)
+Then open `http://127.0.0.1:5000`.
 
-   ✅ **Only one shapefile needed**
+The default view opens the 2025 Polish presidential election runoff at county level, with a winner-color comparison between Nawrocki and Trzaskowski.
 
-   Place the gmina-level shapefiles in the following folder:
+## Built-In Election Data
 
+The app reads built-in CSV files from `data/` and presents them as:
+
+`Country -> Year -> Election -> Round`
+
+For PKW-style presidential election files it detects candidates automatically and exposes focused map modes instead of every raw numeric column.
+
+## Upload CSV
+
+Uploaded files should be semicolon-separated CSV files and must include one TERYT column:
+
+- `TERYT Gminy`
+- `Kod TERYT`
+- `TERYT`
+- `teryt`
+
+For value-scale maps, include:
+
+```csv
+teryt;name;value
+020101;Boleslawiec city;10
+020102;Boleslawiec rural;20
+146501;Warsaw;30
 ```
-gis_boundaries/
-└── gminy/
-    ├── gminy.shp
-    ├── gminy.dbf
-    ├── gminy.shx
-    └── ...
-```
 
-3. **Run your script** (e.g., to plot turnout)
+Required:
 
----
+- `teryt`: TERYT code for the selected boundary level: 6 digits for municipalities, 4 for counties, 2 for voivodeships. For the whole country sample, use `000000`.
+- `value`: numeric value used for the color scale.
 
-## 📚 Example Use Cases
+Optional:
 
-* 🗳️ Election turnout, invalid votes, candidate support
-* 🤝 Demographic analysis
-* 📈 Economic indicators (GDP, unemployment)
-* 🏥 Access to public services
-* 🔺 Any dataset tied to regional codes
+- `name`: name shown in the tooltip.
+- `color`: CSS color if you want to use the optional uploaded-color mode later.
 
----
+You can download level-specific templates from the app: municipality, county, voivodeship, and Poland samples.
 
-**Built in Python. Works with any GeoDataFrame. Ready to be adapted to other countries.**
+## Notes
+
+Name-based matching is intentionally not enabled yet. TERYT remains the authoritative key because Polish administrative names are not unique and often differ by spelling or prefix.
+
+Uploads are accepted with a few public-server safeguards:
+
+- uploaded files are stored under random IDs, not original filenames,
+- uploaded datasets are not listed globally by `/api/datasets`,
+- files are limited to 2 MB, 10,000 rows, and 30 columns,
+- CSV must contain usable TERYT rows plus `value` or `color`,
+- uploads are not served as static files.
+
+Set `TERYT_UPLOADS_ENABLED=0` to disable uploads completely. Set `TERYT_MAX_UPLOAD_BYTES` to change the request size limit.

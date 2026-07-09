@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TERYT Map Plotter</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <h1>TERYT Map Plotter</h1>
+            <p>Color Polish administrative boundaries from election data or your own TERYT CSV.</p>
+          </div>
+        </div>
+
+        <section class="control-group source-control">
+          <label>Data source</label>
+          <div class="segmented" role="group" aria-label="Data source">
+            <button type="button" class="segment is-active" data-source="built-in">Built-in data</button>
+            <button type="button" class="segment" data-source="upload">Upload CSV</button>
+          </div>
+        </section>
+
+        <section class="upload-panel" id="upload-controls" hidden>
+          <label for="upload">Upload CSV</label>
+          <p>
+            Use semicolon-separated CSV with <code>teryt</code>, <code>name</code>, and <code>value</code>.
+            TERYT is the matching key; name is shown in tooltips.
+          </p>
+          <div class="sample-links">
+            <a href="/api/sample-csv?level=gminy">Municipality sample</a>
+            <a href="/api/sample-csv?level=powiaty">County sample</a>
+            <a href="/api/sample-csv?level=wojewodztwa">Voivodeship sample</a>
+            <a href="/api/sample-csv?level=polska">Poland sample</a>
+          </div>
+          <label class="drop-zone" for="upload" id="drop-zone">
+            <input id="upload" type="file" accept=".csv,text/csv">
+            <span>Drop CSV here or click to choose</span>
+            <small>Expected columns: teryt; name; value</small>
+          </label>
+          <div class="control-group" id="uploaded-dataset-control">
+            <label for="uploaded-dataset">Uploaded file</label>
+            <select id="uploaded-dataset"></select>
+          </div>
+        </section>
+
+        <section id="built-in-controls" class="control-stack built-in-grid">
+          <div class="control-group">
+            <label for="level">Boundary</label>
+            <select id="level">
+              {% for key, item in levels.items() %}
+                <option value="{{ key }}">{{ item.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="control-group">
+            <label for="country">Country</label>
+            <select id="country"></select>
+          </div>
+
+          <div class="control-group">
+            <label for="year">Year</label>
+            <select id="year"></select>
+          </div>
+
+          <div class="control-group">
+            <label for="election">Election</label>
+            <select id="election"></select>
+          </div>
+
+          <div class="control-group">
+            <label for="round">Round</label>
+            <select id="round"></select>
+          </div>
+        </section>
+
+        <section class="control-group mode-control" id="strategy-control">
+          <label for="strategy">Map mode</label>
+          <select id="strategy"></select>
+        </section>
+
+        <section class="control-group" id="value-metric-control">
+          <label for="value-metric">Value scale</label>
+          <select id="value-metric"></select>
+        </section>
+
+        <section class="split-control" id="head-to-head-control">
+          <div class="control-group">
+            <label for="candidate-a">Candidate A</label>
+            <select id="candidate-a"></select>
+          </div>
+          <div class="control-group">
+            <label for="candidate-b">Candidate B</label>
+            <select id="candidate-b"></select>
+          </div>
+        </section>
+
+        <section class="action-row">
+          <button type="button" id="download-png">Download PNG</button>
+          <button type="button" id="copy-link">Copy link</button>
+        </section>
+
+        <section class="status-panel">
+          <dl>
+            <div>
+              <dt>Units</dt>
+              <dd id="stat-count">-</dd>
+            </div>
+            <div>
+              <dt>Range</dt>
+              <dd id="stat-range">-</dd>
+            </div>
+            <div>
+              <dt>Average</dt>
+              <dd id="stat-mean">-</dd>
+            </div>
+          </dl>
+        </section>
+      </aside>
+
+      <section class="map-wrap">
+        <div id="map"></div>
+        <div id="legend" class="legend"></div>
+        <div id="toast" class="toast" hidden></div>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

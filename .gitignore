@@ -196,3 +196,5 @@ cython_debug/
 
 .DS_Store
 old_files/
+uploads/*
+!uploads/.gitkeep
